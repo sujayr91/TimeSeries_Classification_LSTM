@@ -1,4 +1,4 @@
-#Multivariate Time Series Classification with LSTM#
+# Multivariate Time Series Classification with LSTM
 
 * Requirements:
   * python 3.6 [Install anaconda 3]
