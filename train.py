@@ -29,9 +29,11 @@ class dataloader(object):
         return(self)
 
     def __next__(self):
+        if(self.index >=(self.totalsamples-self.batch_size + 1)):
+            raise StopIteration
         batchdata = torch.FloatTensor(self.data[self.dataset][self.index:self.index+ self.batch_size, :])
         batchlabel = torch.LongTensor(self.data[self.datalabels][self.index:self.index+ self.batch_size])
-        self.index = (self.index+ self.batch_size)%self.totalsamples
+        self.index = self.index+ self.batch_size
         return batchdata,batchlabel
 
     def __len__(self):
@@ -46,10 +48,14 @@ class timeNet(nn.Module):
         super(timeNet, self).__init__()
         self.lstm= nn.LSTM(input_size,hidden_size,num_layers, batch_first=True)
         self.linear = nn.Linear(hidden_size, num_classes)
-        
+
+    def init_weights(self):
+        self.linear.weight.data.uniform_(-0.1,0.1)
+        self.linear.bias.data.fill_(0)
+
     def forward(self,batch_input):
-        out = self.lstm(batch_input)
-        out = self.linear(out)
+        out,_ = self.lstm(batch_input)
+        out = self.linear(out[:,-1, :])  #Extract outout of lasttime step
         return out
 
 
@@ -63,7 +69,7 @@ parser.add_argument('--checkpoint_path', default ='./checkpoint/')
 logs = {}
 logs['train_loss'], logs['test_loss'], logs['test_acc'] = logger(),logger(),logger() 
 args = parser.parse_args()
-logfile = './traininglogs_learningrate_{}.dll'.format(args.learning_rate)
+logfile = './traininglogs_learningrate_{}.dill'.format(args.learning_rate)
 epochs = args.max_epochs
 
 def test(model, criterion):
@@ -74,16 +80,21 @@ def test(model, criterion):
     acc = 0
     testloss = 0
     num_batches = len(testdata)
-    for index, inputs, targets in enumerate(testdata):
+    print(num_batches)
+    for index, (inputs, targets) in enumerate(testdata):
        inputs= Variable(inputs)
+       targets= Variable(targets)
        outputs = model(inputs)
        loss = criterion(outputs, targets)
        testloss+=loss.data[0]
-       correct+=torch.sum(outputs == targets)
-       total+=targets.size()[0]
+       _,predicted=torch.max(outputs.data,1)
+       correct += predicted.eq(targets.data).cpu().sum()
+       total+=targets.size(0)
+       print("In test loop")
     
     acc = 100.* correct/total
     avgtestloss = testloss/num_batches
+    print("Test Accuracy: {} Test Loss: {}".format(acc, avgtestloss))
     return (acc, avgtestloss)
 
 
@@ -98,9 +109,6 @@ def train():
     print('total batches : {}'.format(num_batches))
     for epoch in range(0, epochs):
         for index, (inputs,targets) in enumerate(traindata):
-            print(inputs)
-            print(targets)
-            st()
             inputs = Variable(inputs)
             targets = Variable(targets)
             outputs= model(inputs)
@@ -109,7 +117,7 @@ def train():
             logs['train_loss'].update(loss,itrepoch)
             if((index+1)% 5 == 0):
                 print('Epoch = {}, Loss = {}'.format(epoch, loss.data[0]))
-            if((index + 1)% 20 == 0):
+            if((index + 1)% 2 == 0):
                 print('----------Starting Test ----------------')
                 model.eval()
                 testacc, testloss = test(model, criterion)
@@ -119,8 +127,7 @@ def train():
 
         if((epoch + 1)% 5 ==0):
             torch.save(model.state_dict(), args.checkpoint_path + 'checkpoint_epoch_{}.pth'.format(epoch))
-
-        with open(logfile, 'w') as mylogger:
+        with open(logfile, 'wb') as mylogger:
             dill.dump(logs, mylogger)
 
 
