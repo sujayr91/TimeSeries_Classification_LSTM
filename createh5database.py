@@ -4,6 +4,7 @@ import timeit
 from random import shuffle
 import h5py
 import os
+import pickle
 
 class H5Database():
     '''
@@ -29,16 +30,22 @@ class H5Database():
         self.sample_buffer = []
         self.label_buffer =[]
         self.create_hdf5_datasets()
+        self.datasettype = "train"
+    
+    def initialize_dataset(self, datasettype):
+        self.idxs['index'] = 0
+        self.datasettype = datasettype
 
-    def __enter__(self):
-        print("Opening Database")
-        self.t0 = time.time()
-        return self
-
-    def __exit__(self):
-        if(self.sample_id_buffer):
-            print('writing last buffer')
-            
+    def flushbuffers(self):
+        if(self.datasettype == 'train'):
+            self._write_buffer(self.train_db, self.sample_buffer)
+            self._write_buffer(self.train_label_db, self.label_buffer)
+        else:
+            self._write_buffer(self.test_db, self.sample_buffer)
+            self._write_buffer(self.test_label_db, self.label_buffer)
+        self._clean_buffers()
+    
+    def close(self):
         print("Closing database")
         self.db.close()
 
@@ -52,17 +59,19 @@ class H5Database():
         self.train_db = self.db.create_dataset("trainsamples", shape = (self.train_length, ROWS, COLS), dtype = "float")
         self.test_db = self.db.create_dataset("testsamples", shape = (self.test_length, ROWS, COLS), dtype = "float")
 
-    def add(self, label, sample, datatype):
+    def add(self, label, sample):
         '''
             Add samples to buffer. Write buffer to hdf5 when full
         '''
         self.sample_buffer.append(sample)
         self.label_buffer.append(label)
         if(len(self.sample_buffer)==self.buffer_size):
-            if(datatype == 'train'):
+            if(self.datasettype == 'train'):
                 self._write_buffer(self.train_db,self.sample_buffer)
                 self._write_buffer(self.train_label_db, self.label_buffer)
             else:
+                print('Write buffer............')
+                print(self.label_buffer)
                 self._write_buffer(self.test_db, self.sample_buffer)
                 self._write_buffer(self.test_label_db, self.label_buffer)
 
@@ -84,8 +93,8 @@ class H5Database():
         '''
             clear buffers
         '''
-        self.sample_id_buffer =[]
-        self.sample_vector_buffer =[]
+        self.sample_buffer =[]
+        self.label_buffer =[]
 
 
 def getlabel(label):
@@ -107,33 +116,55 @@ def builddatabase(datasamples, databasepath):
 
     '''
     features= [2,3,4,5,6,9,29,32,33,34,35,37,38,42,43,44,45,46]
-    timelength = 128
+    timelength = 256
     trainsplit = int(len(datasamples) * 0.75)
     traindatasamples = datasamples[:trainsplit]
     testdatasamples = datasamples[trainsplit:]
     dataset = H5Database(databasepath,(timelength,len(features)), 
-            5, len(traindatasamples), 
+            25, len(traindatasamples), 
             len(testdatasamples))
+    train_mean = np.zeros((1,len(features)),dtype=float)
+    sample_count =0
+    features_sum = np.zeros((1,len(features)),dtype=float)
     print('######## Creating Train Dataset #########')
+    dataset.initialize_dataset("train")
     for index,sample in enumerate(traindatasamples):
-        print('Working on file:{} Complete : {}'.format(sample, 100.*index/len(traindatasamples)))
-        data = np.genfromtxt(sample, delimiter=",")[-timelength:,features]
-        labelname = sample.split("/")[2]
-        label = getlabel(labelname)
-        dataset.add(label,data, "train")          
-    
+        print('Working on file:{} Complete : {:.2f}'.format(sample, 100.*index/len(traindatasamples)))
+        try:
+            data = np.genfromtxt(sample, delimiter=",")[-timelength:,features]
+            features_sum+=data.sum(0)
+            sample_count+=data.shape[0]
+            train_mean = features_sum/(sample_count)
+            labelname = sample.split("/")[2]
+            label = getlabel(labelname)
+            dataset.add(label,data)
+        except:
+            print('Exception in processing : {}'.format(sample))
+            continue
+       
+    np.save('train_mean', train_mean)
+    dataset.flushbuffers()
+     
     print('######## Creating Test Dataset #########')
+    dataset.initialize_dataset("test")
     for index,sample in enumerate(testdatasamples):
-        print('Working on file:{} Complete : {}'.format(sample, 100.*index/len(testdatasamples)))
-        data = np.genfromtxt(sample, delimiter=",")[-timelength:,features]
-        labelname = sample.split("/")[2]
-        label = getlabel(labelname)
-        dataset.add(label,data, "test")          
-    
+        print('Working on file:{} Complete : {:.2f}'.format(sample, 100.*index/len(testdatasamples)))
+        try:
+            data = np.genfromtxt(sample, delimiter=",")[-timelength:,features]
+            labelname = sample.split("/")[2]
+            label = getlabel(labelname)
+            dataset.add(label,data)
+
+        except:
+            print('Exception in processing : {}'.format(sample))
+            continue
+        
+    dataset.flushbuffers()
+    dataset.close() 
 
 if __name__=='__main__':
     datasamples =[]
-    database = 'tempdatabase.h5'
+    database = 'timeseriesdatabase.h5'
     rootpath = './dataset'
     datapaths = os.listdir('./dataset')
     for datapath in datapaths:
@@ -142,4 +173,4 @@ if __name__=='__main__':
             samplepath = os.path.join(currentpath,sample)
             datasamples.append(samplepath)
     shuffle(datasamples)    
-    builddatabase(datasamples[:100], database)
+    builddatabase(datasamples, database)

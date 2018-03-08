@@ -7,13 +7,13 @@ from torch.autograd import Variable
 import argparse
 import dill
 from logutils import logger
+import numpy.matlib as repmat
 from pdb import set_trace as st
-
 class dataloader(object):
     '''
         Loads data from hdf5 file
     '''
-    def __init__(self, datapath = None, dataset= 'train',batch_size = 64):
+    def __init__(self, datapath = None, dataset= 'train',mean_path = './train_mean.npy', batch_size = 64):
         self.datapath = datapath
         self.batch_size= batch_size
         self.data = h5py.File(datapath, 'r+')
@@ -23,6 +23,10 @@ class dataloader(object):
         self.rowlength = self.data[self.dataset].shape[1]
         self.collength = self.data[self.dataset].shape[2]
         self.total_batches = int(self.totalsamples / self.batch_size)
+        self.train_mean =  np.load(mean_path)
+        assert self.train_mean.shape[1] == self.collength, "Mean feature length, datasamples feature length doesn't match"
+        self.train_mean = repmat.repmat(self.train_mean, self.batch_size,1)
+        self.train_mean = repmat.repmat(self.train_mean,1,self.rowlength).reshape(self.batch_size,self.rowlength, self.collength)
         self.index = 0
 
     def __iter__(self):
@@ -31,7 +35,9 @@ class dataloader(object):
     def __next__(self):
         if(self.index >=(self.totalsamples-self.batch_size + 1)):
             raise StopIteration
-        batchdata = torch.FloatTensor(self.data[self.dataset][self.index:self.index+ self.batch_size, :])
+        batchdata = self.data[self.dataset][self.index:self.index+ self.batch_size, :]
+        batchdata-=self.train_mean
+        batchdata = torch.FloatTensor(batchdata)
         batchlabel = torch.LongTensor(self.data[self.datalabels][self.index:self.index+ self.batch_size])
         self.index = self.index+ self.batch_size
         return batchdata,batchlabel
@@ -64,6 +70,7 @@ parser.add_argument('--learning_rate', default = 0.01,type=float)
 parser.add_argument('--max_epochs', default = 50,type=int)
 parser.add_argument('--batch_size', default = 15,type=int)
 parser.add_argument('--dataset_path', default ='./timeseriesdatabase.h5')
+parser.add_argument('--mean_path', default ='./train_mean.npy')
 parser.add_argument('--checkpoint_path', default ='./checkpoint/')
 
 logs = {}
@@ -74,7 +81,7 @@ epochs = args.max_epochs
 
 def test(model, criterion):
     global logs
-    testdata = dataloader(args.dataset_path, 'test', args.batch_size)
+    testdata = dataloader(args.dataset_path, 'test', args.mean_path, args.batch_size)
     correct = 0
     total = 0
     acc = 0
@@ -101,7 +108,7 @@ def test(model, criterion):
 def train():
     global epochs
     global logs
-    traindata = dataloader(args.dataset_path,'train', args.batch_size)
+    traindata = dataloader(args.dataset_path,'train',args.mean_path, args.batch_size)
     model = timeNet(2, 18, 32, 3)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr= args.learning_rate)
