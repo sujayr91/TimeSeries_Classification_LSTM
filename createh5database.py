@@ -43,6 +43,8 @@ class H5Database():
         else:
             self._write_buffer(self.test_db, self.sample_buffer)
             self._write_buffer(self.test_label_db, self.label_buffer)
+            
+        self.idxs['index']= self.idxs['index']+ len(self.label_buffer)
         self._clean_buffers()
     
     def close(self):
@@ -66,24 +68,14 @@ class H5Database():
         self.sample_buffer.append(sample)
         self.label_buffer.append(label)
         if(len(self.sample_buffer)==self.buffer_size):
-            if(self.datasettype == 'train'):
-                self._write_buffer(self.train_db,self.sample_buffer)
-                self._write_buffer(self.train_label_db, self.label_buffer)
-            else:
-                print('Write buffer............')
-                print(self.label_buffer)
-                self._write_buffer(self.test_db, self.sample_buffer)
-                self._write_buffer(self.test_label_db, self.label_buffer)
-
-            self.idxs['index']= self.idxs['index']+ len(self.label_buffer)
-            self._clean_buffers()
+            self.flushbuffers()
 
     def _write_buffer(self, dataset, buf):
         '''
             write samples to buffer
         '''
         
-        print("Writing Buffer {}".format(dataset))
+        print("Writing Buffer {}".format(len(buf)))
         start = self.idxs['index']
         end = start+ len(buf)
         dataset[start:end] = buf
@@ -129,7 +121,7 @@ def builddatabase(datasamples, databasepath):
     print('######## Creating Train Dataset #########')
     dataset.initialize_dataset("train")
     for index,sample in enumerate(traindatasamples):
-        print('Working on file:{} Complete : {:.2f}'.format(sample, 100.*index/len(traindatasamples)))
+        print('Working on Train Sample:{} Complete : {:.2f}'.format(sample, 100.*index/len(traindatasamples)))
         try:
             data = np.genfromtxt(sample, delimiter=",")[-timelength:,features]
             features_sum+=data.sum(0)
@@ -143,12 +135,10 @@ def builddatabase(datasamples, databasepath):
             continue
        
     np.save('train_mean', train_mean)
-    dataset.flushbuffers()
-     
     print('######## Creating Test Dataset #########')
     dataset.initialize_dataset("test")
     for index,sample in enumerate(testdatasamples):
-        print('Working on file:{} Complete : {:.2f}'.format(sample, 100.*index/len(testdatasamples)))
+        print('Working on Test Sample:{} Complete : {:.2f}'.format(sample, 100.*index/len(testdatasamples)))
         try:
             data = np.genfromtxt(sample, delimiter=",")[-timelength:,features]
             labelname = sample.split("/")[2]
@@ -159,7 +149,6 @@ def builddatabase(datasamples, databasepath):
             print('Exception in processing : {}'.format(sample))
             continue
         
-    dataset.flushbuffers()
     dataset.close() 
 
 if __name__=='__main__':

@@ -1,3 +1,4 @@
+import gc
 import h5py
 import sys
 import numpy as np
@@ -34,6 +35,7 @@ class dataloader(object):
 
     def __next__(self):
         if(self.index >=(self.totalsamples-self.batch_size + 1)):
+            self.index = 0
             raise StopIteration
         batchdata = self.data[self.dataset][self.index:self.index+ self.batch_size, :]
         batchdata-=self.train_mean
@@ -66,7 +68,7 @@ class timeNet(nn.Module):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--learning_rate', default = 0.01,type=float)
+parser.add_argument('--learning_rate', default = 0.0001,type=float)
 parser.add_argument('--max_epochs', default = 50,type=int)
 parser.add_argument('--batch_size', default = 15,type=int)
 parser.add_argument('--dataset_path', default ='./timeseriesdatabase.h5')
@@ -88,8 +90,8 @@ def test(model, criterion):
     testloss = 0
     num_batches = len(testdata)
     print(num_batches)
-    for index, (inputs, targets) in enumerate(testdata):
-       inputs= Variable(inputs)
+    for index, (features, targets) in enumerate(testdata):
+       inputs= Variable(features)
        targets= Variable(targets)
        outputs = model(inputs)
        loss = criterion(outputs, targets)
@@ -97,14 +99,14 @@ def test(model, criterion):
        _,predicted=torch.max(outputs.data,1)
        correct += predicted.eq(targets.data).cpu().sum()
        total+=targets.size(0)
-       print("In test loop")
+       del features, inputs, outputs, targets
+       gc.collect()
     
     acc = 100.* correct/total
     avgtestloss = testloss/num_batches
     print("Test Accuracy: {} Test Loss: {}".format(acc, avgtestloss))
     return (acc, avgtestloss)
-
-
+@profile
 def train():
     global epochs
     global logs
@@ -115,22 +117,27 @@ def train():
     num_batches =  len(traindata)
     print('total batches : {}'.format(num_batches))
     for epoch in range(0, epochs):
-        for index, (inputs,targets) in enumerate(traindata):
-            inputs = Variable(inputs)
+        for index, (features,targets) in enumerate(traindata):
+            inputs = Variable(features)
             targets = Variable(targets)
             outputs= model(inputs)
             loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
             itrepoch = epoch + 1.* ((index + 1)/num_batches)
-            logs['train_loss'].update(loss,itrepoch)
+            logs['train_loss'].update(loss.data[0],itrepoch)
             if((index+1)% 5 == 0):
                 print('Epoch = {}, Loss = {}'.format(epoch, loss.data[0]))
-            if((index + 1)% 2 == 0):
-                print('----------Starting Test ----------------')
-                model.eval()
-                testacc, testloss = test(model, criterion)
-                model.train()
-                logs['test_loss'].update(testloss, itrepoch)
-                logs['test_acc'].update(testacc, itrepoch)
+            del inputs,outputs, targets,features,loss
+            gc.collect()
+
+        
+        print('----------Starting Test ----------------')
+        model.eval()
+        testacc, testloss = test(model, criterion)
+        model.train()
+        logs['test_loss'].update(testloss, epoch)
+        logs['test_acc'].update(testacc, epoch)
 
         if((epoch + 1)% 5 ==0):
             torch.save(model.state_dict(), args.checkpoint_path + 'checkpoint_epoch_{}.pth'.format(epoch))
